@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+wheels/
+*.whl
+*.tar.gz
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env/
+
+# Poetry
+poetry.lock
+
+# pytest
+.pytest_cache/
+.cache/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+
+# mypy / type checkers
+.mypy_cache/
+.dmypy.json
+.pytype/
+.pyre/
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+
+# tlog runtime data (don't accidentally commit your work diary)
+*.jsonl
+current.json
+config.toml
