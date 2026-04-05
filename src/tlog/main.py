@@ -88,6 +88,36 @@ def _parse_time(value: str, name: str = "time") -> time:
     _abort(f"Invalid {name} format: {value!r}. Expected HH:MM.")
 
 
+def _parse_duration(value: str) -> timedelta:
+    """
+    Parse a human duration string into a timedelta.
+
+    Accepted formats:
+      2h30m  1h  45m  90  1.5h  0:30  1:30
+    Plain integers are treated as minutes.
+    """
+    import re
+    value = value.strip()
+
+    # HH:MM or H:MM style
+    m = re.fullmatch(r"(\d+):(\d{2})", value)
+    if m:
+        return timedelta(hours=int(m.group(1)), minutes=int(m.group(2)))
+
+    # Combinations of hours/minutes: 2h30m, 2h, 30m, 1.5h
+    m = re.fullmatch(r"(?:(\d+(?:\.\d+)?)h)?(?:(\d+)m)?", value, re.IGNORECASE)
+    if m and (m.group(1) or m.group(2)):
+        hours = float(m.group(1) or 0)
+        minutes = int(m.group(2) or 0)
+        return timedelta(hours=hours, minutes=minutes)
+
+    # Plain integer → minutes
+    if re.fullmatch(r"\d+", value):
+        return timedelta(minutes=int(value))
+
+    _abort(f"Invalid duration {value!r}. Examples: 2h30m, 1h, 45m, 90, 1.5h, 1:30")
+
+
 def _abort(message: str) -> None:
     err_console.print(f"[bold red]Error:[/bold red] {message}")
     raise typer.Exit(code=1)
@@ -159,22 +189,50 @@ def status() -> None:
 def add(
     project: Annotated[str, typer.Argument(help="Project name")],
     description: Annotated[str, typer.Argument(help="What you worked on")],
-    start: Annotated[str, typer.Option("--start", "-s", help="Start time (HH:MM)")],
-    end: Annotated[str, typer.Option("--end", "-e", help="End time (HH:MM)")],
+    start: Annotated[Optional[str], typer.Option("--start", "-s", help="Start time (HH:MM)")] = None,
+    end: Annotated[Optional[str], typer.Option("--end", "-e", help="End time (HH:MM)")] = None,
+    duration: Annotated[Optional[str], typer.Option("--duration", "-D", help="Duration (e.g. 2h30m, 1h, 45m, 90)")] = None,
     entry_date: Annotated[Optional[str], typer.Option("--date", "-d", help="Date (YYYY-MM-DD, default: today)")] = None,
     tag: Annotated[Optional[list[str]], typer.Option("--tag", "-t", help="Tag (repeatable)")] = None,
 ) -> None:
-    """Add a completed time entry manually."""
+    """Add a completed time entry manually.
+
+    Provide any two of --start, --end, --duration:
+
+      tlog add ClientA "Bug fix" --start 09:00 --end 11:30
+
+      tlog add ClientA "Bug fix" --start 09:00 --duration 2h30m
+
+      tlog add ClientA "Bug fix" --duration 2h30m          (ends now)
+
+      tlog add ClientA "Bug fix" --end 11:30 --duration 2h30m
+    """
     on = _parse_date(entry_date, "--date") or date.today()
-    start_time = _parse_time(start, "--start")
-    end_time = _parse_time(end, "--end")
+    given = sum(x is not None for x in (start, end, duration))
 
-    start_dt = datetime.combine(on, start_time)
-    end_dt = datetime.combine(on, end_time)
+    if given < 2:
+        _abort("Provide at least two of --start, --end, --duration.")
 
-    if end_dt <= start_dt:
-        # Handle crossing midnight: end is on the next day
-        end_dt = datetime.combine(on + timedelta(days=1), end_time)
+    td = _parse_duration(duration) if duration else None
+
+    if start and end:
+        start_dt = datetime.combine(on, _parse_time(start, "--start"))
+        end_dt = datetime.combine(on, _parse_time(end, "--end"))
+        if end_dt <= start_dt:
+            end_dt = datetime.combine(on + timedelta(days=1), _parse_time(end, "--end"))
+    elif start and td:
+        start_dt = datetime.combine(on, _parse_time(start, "--start"))
+        end_dt = start_dt + td
+    elif end and td:
+        end_dt = datetime.combine(on, _parse_time(end, "--end"))
+        start_dt = end_dt - td
+    else:
+        # duration only — end = now, start = now - duration
+        end_dt = datetime.now().replace(second=0, microsecond=0)
+        start_dt = end_dt - td
+
+    if start_dt >= end_dt:
+        _abort("Start must be before end.")
 
     tags = tag or []
     entry = TimeEntry(
@@ -186,10 +244,12 @@ def add(
     )
     storage.save_entry(entry)
 
+    start_str = start_dt.strftime("%H:%M")
+    end_str = end_dt.strftime("%H:%M")
     tag_str = f"  [{', '.join(tags)}]" if tags else ""
     console.print(
         f"[green]✚  Added:[/green] [bold]{project}[/bold] — {description}{tag_str}\n"
-        f"   [dim]{on.isoformat()}  {start} – {end}  ({_fmt_duration(entry.duration)})[/dim]"
+        f"   [dim]{on.isoformat()}  {start_str} – {end_str}  ({_fmt_duration(entry.duration)})[/dim]"
     )
 
 
